@@ -5,3 +5,33 @@ runtime: fastapi
 app: server.app:app
 port: 8000
 
+tasks:
+  - id: incident_easy
+    name: "Single Service Outage (Easy)"
+    description: "Diagnose and resolve a payment-service latency spike caused by a bad deployment."
+    difficulty: easy
+    reset_kwargs:
+      difficulty: easy
+    grader:
+      type: env_reward
+      success_threshold: 0.1
+
+  - id: incident_medium
+    name: "Dependency Failure (Medium)"
+    description: "Identify a DB timeout causing API gateway failures with no logs initially available."
+    difficulty: medium
+    reset_kwargs:
+      difficulty: medium
+    grader:
+      type: env_reward
+      success_threshold: 0.1
+
+  - id: incident_hard
+    name: "Multi-Service Root Cause (Hard)"
+    description: "Trace EU checkout failures across auth, payment, and checkout services to a DNS issue."
+    difficulty: hard
+    reset_kwargs:
+      difficulty: hard
+    grader:
+      type: env_reward
+      success_threshold: 0.1

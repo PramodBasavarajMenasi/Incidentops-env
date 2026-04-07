@@ -276,7 +276,38 @@ class IncidentopsEnvironment(Environment):
         }
         self._last_observation = obs
         return obs
+    def grade(self) -> dict:
+        """Called by the OpenEnv validator to score a completed episode."""
+        assert self._snapshot is not None
+        s = self._snapshot
 
+        total_steps = max(s.step_count, 1)  # ✅ used below
+        sla_ok = s.step_count <= s.sla_steps
+        correct_actions = sum(
+            1 for a in s.action_history if a in s.correct_action_sequence
+        )
+        correctness_ratio = correct_actions / max(len(s.correct_action_sequence), 1)
+
+        # ✅ efficiency bonus — fewer steps = better score
+        efficiency_bonus = max(0.0, (s.sla_steps - total_steps) / s.sla_steps)
+
+        if s.resolved and sla_ok:
+            score = min(1.0, 0.5 + 0.3 * correctness_ratio + 0.2 * efficiency_bonus)
+        elif s.resolved:
+            score = min(0.6, 0.3 + 0.3 * correctness_ratio)
+        else:
+            score = max(0.0, 0.1 * correctness_ratio)
+
+        return {
+            "score": round(score, 4),
+            "success": s.resolved and sla_ok,
+            "incident_resolved": s.resolved,
+            "steps_taken": s.step_count,
+            "sla_met": sla_ok,
+            "efficiency_bonus": round(efficiency_bonus, 4),
+            "wrong_escalations": s.wrong_escalations,
+            "evidence_collected": s.evidence_collected,
+        }
     @property
     def state(self) -> State:
         return self._state

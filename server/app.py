@@ -32,7 +32,9 @@ Usage:
     python -m server.app
 """
 from __future__ import annotations
+from fastapi import HTTPException, Request
 from openenv.core.env_server.http_server import create_app
+
 try:
     from ..models import IncidentopsAction, IncidentopsObservation
     from incidentops_env_environment import IncidentopsEnvironment
@@ -40,17 +42,37 @@ except Exception:
     from models import IncidentopsAction, IncidentopsObservation
     from server.incidentops_env_environment import IncidentopsEnvironment
 
+
+# ✅ Single shared env instance used by BOTH create_app and /grade
+_shared_env = IncidentopsEnvironment()
+
 app = create_app(
-    IncidentopsEnvironment,
+    lambda: _shared_env,   # ← pass a factory that returns same instance
     IncidentopsAction,
     IncidentopsObservation,
     env_name="incidentops_env",
     max_concurrent_envs=1,
 )
 
+
+@app.post("/grade")
+@app.get("/grade")
+async def grade_endpoint():
+    try:
+        return _shared_env.grade()
+    except AssertionError:
+        raise HTTPException(
+            status_code=400,
+            detail="No active episode. Call /reset first."
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 def main(host: str = "0.0.0.0", port: int = 7860) -> None:
     import uvicorn
     uvicorn.run(app, host=host, port=port)
+
 
 if __name__ == "__main__":
     main()
