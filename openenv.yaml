@@ -13,8 +13,9 @@ tasks:
     reset_kwargs:
       difficulty: easy
     grader:
-      type: env_reward
-      success_threshold: 0.1
+      type: python_class
+      module: graders
+      class: IncidentEasyGrader
 
   - id: incident_medium
     name: "Dependency Failure (Medium)"
@@ -23,15 +24,17 @@ tasks:
     reset_kwargs:
       difficulty: medium
     grader:
-      type: env_reward
-      success_threshold: 0.1
+      type: python_class
+      module: graders
+      class: IncidentMediumGrader
 
   - id: incident_hard
     name: "Multi-Service Root Cause (Hard)"
-    description: "Trace EU checkout failures across auth, payment, and checkout services to a DNS issue."
+    description: "Trace EU checkout failures across auth, payment, checkout to a DNS issue."
     difficulty: hard
     reset_kwargs:
       difficulty: hard
     grader:
-      type: env_reward
-      success_threshold: 0.1
+      type: python_class
+      module: graders
+      class: IncidentHardGrader
