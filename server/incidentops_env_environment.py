@@ -242,16 +242,17 @@ class IncidentopsEnvironment(Environment):
 
         return reward
 
-    def reset(self, difficulty: str = "easy") -> IncidentopsObservation:
+    def reset(
+    self,
+    episode_id: str = None,
+    difficulty: str = "easy",
+    **kwargs
+) -> IncidentopsObservation:
         scenario = self._pick_scenario(difficulty)
         self._difficulty = difficulty
-        self._state = State(episode_id=str(uuid4()), step_count=0)
-
+        self._state = State(episode_id=episode_id or str(uuid4()), step_count=0)
         self._snapshot = IncidentSnapshot(**scenario)
-
-        # ✅ FORCE CLEAN (important)
         self._snapshot.action_history = []
-
         self._last_observation = self._build_observation()
         return self._last_observation
 
@@ -274,6 +275,10 @@ class IncidentopsEnvironment(Environment):
             "last_action": action_name,
             "last_reward": reward,
         }
+        if done:
+            grade_result = self.grade()
+            obs.grader_score = grade_result["score"]
+
         self._last_observation = obs
         return obs
     def grade(self) -> dict:
