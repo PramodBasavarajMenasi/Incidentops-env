@@ -12,7 +12,9 @@ tasks:
     reset_kwargs:
       difficulty: easy
     grader:
-      type: env_reward
+      type: class
+      module: graders
+      class: IncidentEasyGrader
 
   - id: incident_medium
     name: "Dependency Failure (Medium)"
@@ -20,7 +22,9 @@ tasks:
     reset_kwargs:
       difficulty: medium
     grader:
-      type: env_reward
+      type: class
+      module: graders
+      class: IncidentMediumGrader
 
   - id: incident_hard
     name: "Multi-Service Root Cause (Hard)"
@@ -28,4 +32,6 @@ tasks:
     reset_kwargs:
       difficulty: hard
     grader:
-      type: env_reward
+      type: class
+      module: graders
+      class: IncidentHardGrader
