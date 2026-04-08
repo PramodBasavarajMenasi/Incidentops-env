@@ -53,21 +53,37 @@ app = create_app(
     env_name="incidentops_env",
     max_concurrent_envs=1,
 )
+from graders import IncidentEasyGrader, IncidentMediumGrader, IncidentHardGrader
 
+GRADERS = {
+    "incident_easy": IncidentEasyGrader(),
+    "incident_medium": IncidentMediumGrader(),
+    "incident_hard": IncidentHardGrader(),
+}
 
 @app.post("/grade")
 @app.get("/grade")
-async def grade_endpoint():
+async def grade_endpoint(task_id: str = None):
     try:
-        return _shared_env.grade()
+        # Use env's built-in grade() for live episode
+        result = _shared_env.grade()
+        
+        # Also attach task-specific grader score if task_id provided
+        if task_id and task_id in GRADERS:
+            # Build trajectory from current snapshot for task grader
+            snapshot = _shared_env._snapshot
+            if snapshot:
+                trajectory = [
+                    {"action": a, "observation": {"incident_resolved": snapshot.resolved}}
+                    for a in snapshot.action_history
+                ]
+                result["grader_score"] = GRADERS[task_id].grade(trajectory)
+        
+        return result
     except AssertionError:
-        raise HTTPException(
-            status_code=400,
-            detail="No active episode. Call /reset first."
-        )
+        raise HTTPException(status_code=400, detail="No active episode. Call /reset first.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 def main(host: str = "0.0.0.0", port: int = 7860) -> None:
     import uvicorn
