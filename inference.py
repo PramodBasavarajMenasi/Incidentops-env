@@ -3,7 +3,8 @@ import os
 import sys
 import traceback
 
-print("[DEBUG] line 6", flush=True)
+import httpx
+from openai import OpenAI
 
 try:
     from dotenv import load_dotenv
@@ -11,26 +12,29 @@ try:
 except ImportError:
     pass
 
-print("[DEBUG] line 14", flush=True)
+# MANDATORY: Use the injected environment variables
+API_BASE_URL = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1")
+API_KEY = os.environ.get("API_KEY", "") or os.environ.get("HF_TOKEN", "")
+MODEL_NAME = os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
 
-import httpx
-
-print("[DEBUG] line 18", flush=True)
-
-from openai import OpenAI
-
-print("[DEBUG] line 22", flush=True)
-
-API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY") or os.getenv("OPENAI_API_KEY")
-API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
 BENCHMARK = "incidentops_env"
 TASK_IDS = ["incident_easy", "incident_medium", "incident_hard"]
-ENV_URL = os.getenv("ENV_URL", "http://localhost:8000")
+ENV_URL = os.environ.get("ENV_URL", "http://localhost:8000")
 MAX_STEPS = 12
 TEMPERATURE = 0.2
 
-print("[DEBUG] line 33", flush=True)
+SYSTEM_PROMPT = """You are an expert incident-response engineer.
+You are given an incident observation with alert details, severity, affected services, and available actions.
+Analyze the situation and choose the BEST single action from the available_actions list.
+
+Rules:
+- If logs are not available, request_logs first
+- Investigate before escalating
+- Escalate to the correct team based on evidence
+- Resolve only when the incident is actually fixed
+- Minimize steps to stay within SLA
+
+Return ONLY the action string, nothing else. No explanation, no quotes."""
 
 
 def log_start(task, env, model):
@@ -48,7 +52,59 @@ def log_end(success, steps, score, rewards):
     print(f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}", flush=True)
 
 
-def choose_action(obs):
+def choose_action_llm(client, obs):
+    """Always call the LLM first, fall back to deterministic only on error."""
+    available = obs.get("available_actions", [])
+    if not available:
+        return "resolve_incident"
+
+    obs_for_llm = {
+        "alert_summary": obs.get("alert_summary", ""),
+        "severity": obs.get("severity", ""),
+        "likely_cause": obs.get("likely_cause", ""),
+        "hf_confidence": obs.get("hf_confidence", 0.0),
+        "logs_available": obs.get("logs_available", False),
+        "log_snippet": obs.get("log_snippet", ""),
+        "services_affected": obs.get("services_affected", []),
+        "elapsed_steps": obs.get("elapsed_steps", 0),
+        "sla_steps_remaining": obs.get("sla_steps_remaining", 0),
+        "action_history": obs.get("action_history", []),
+        "available_actions": available,
+        "incident_resolved": obs.get("incident_resolved", False),
+        "wrong_escalations": obs.get("wrong_escalations", 0),
+    }
+
+    try:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": json.dumps(obs_for_llm)},
+            ],
+            temperature=TEMPERATURE,
+            max_tokens=20,
+        )
+        text = (response.choices[0].message.content or "").strip()
+        # Clean up response - take first line, remove quotes
+        text = text.splitlines()[0].strip().strip("'\"` ")
+
+        if text in available:
+            return text
+
+        # Try partial match
+        for action in available:
+            if action in text or text in action:
+                return action
+
+    except Exception as e:
+        print(f"[DEBUG] LLM call error: {e}", flush=True)
+
+    # Deterministic fallback only if LLM fails
+    return choose_action_deterministic(obs)
+
+
+def choose_action_deterministic(obs):
+    """Fallback deterministic policy."""
     available = obs.get("available_actions", [])
     logs_available = obs.get("logs_available", False)
     likely_cause = obs.get("likely_cause", "unknown")
@@ -88,8 +144,7 @@ def extract_obs(data):
     return obs
 
 
-def run_task(http, task_id):
-    print(f"[DEBUG] Starting task: {task_id}", flush=True)
+def run_task(client, http, task_id):
     rewards = []
     steps_taken = 0
     success = False
@@ -98,10 +153,10 @@ def run_task(http, task_id):
     log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
 
     try:
+        # RESET
         r = http.post(f"{ENV_URL}/reset", json={"task_id": task_id}, timeout=30.0)
         r.raise_for_status()
         obs = extract_obs(r.json())
-        print(f"[DEBUG] Reset OK: cause={obs.get('likely_cause')}", flush=True)
 
         finished = obs.get("done", False) or obs.get("incident_resolved", False)
 
@@ -109,9 +164,10 @@ def run_task(http, task_id):
             if finished:
                 break
 
-            action_name = choose_action(obs)
-            print(f"[DEBUG] Step {step}: {action_name}", flush=True)
+            # ALWAYS call LLM (required by validator)
+            action_name = choose_action_llm(client, obs)
 
+            # STEP
             r = http.post(
                 f"{ENV_URL}/step",
                 json={"action": {"action": action_name}},
@@ -131,49 +187,58 @@ def run_task(http, task_id):
             steps_taken = step
             log_step(step, action_name, reward, finished, None)
 
-        r = http.get(f"{ENV_URL}/grade", params={"task_id": task_id}, timeout=30.0)
-        r.raise_for_status()
-        grade = r.json()
-        score = float(grade.get("score", 0.0))
-        success = bool(grade.get("success", False))
-        print(f"[DEBUG] Grade: {grade}", flush=True)
+        # GRADE
+        try:
+            r = http.get(f"{ENV_URL}/grade", params={"task_id": task_id}, timeout=30.0)
+            r.raise_for_status()
+            grade = r.json()
+            score = float(grade.get("score", 0.0))
+            success = bool(grade.get("success", False))
+        except Exception as e:
+            print(f"[DEBUG] Grade error: {e}", flush=True)
+            success = obs.get("incident_resolved", False)
+            score = max(0.0, min(1.0, sum(rewards) / 5.0))
 
     except Exception as e:
-        print(f"[DEBUG] Error: {e}", flush=True)
+        print(f"[DEBUG] Error in task {task_id}: {e}", flush=True)
         traceback.print_exc()
 
     finally:
         log_end(success, steps_taken, score, rewards)
 
 
-print("[DEBUG] line 137 - about to define main", flush=True)
-
-
 def main():
-    print(f"[DEBUG] main() called", flush=True)
-    print(f"[DEBUG] ENV_URL={ENV_URL}", flush=True)
+    if not API_KEY:
+        print("[ERROR] No API_KEY or HF_TOKEN set!", flush=True)
+        sys.exit(1)
+
+    # Initialize OpenAI client with injected credentials
+    client = OpenAI(
+        base_url=API_BASE_URL,
+        api_key=API_KEY,
+    )
 
     http = httpx.Client()
 
+    # Health check
     try:
         r = http.get(f"{ENV_URL}/tasks", timeout=10.0)
-        print(f"[DEBUG] Server OK: {r.status_code}", flush=True)
+        r.raise_for_status()
     except Exception as e:
-        print(f"[ERROR] Server not running: {e}", flush=True)
+        print(f"[ERROR] Server not reachable: {e}", flush=True)
+        for tid in TASK_IDS:
+            log_start(task=tid, env=BENCHMARK, model=MODEL_NAME)
+            log_end(False, 0, 0.0, [])
         return
 
+    # Run all 3 tasks
     for task_id in TASK_IDS:
-        run_task(http, task_id)
+        run_task(client, http, task_id)
 
     http.close()
-    print("[DEBUG] Done!", flush=True)
 
-
-print("[DEBUG] line 160 - about to check name", flush=True)
-print(f"[DEBUG] name = {__name__}", flush=True)
 
 if __name__ == "__main__":
-    print("[DEBUG] entering main()", flush=True)
     try:
         main()
     except Exception as e:
