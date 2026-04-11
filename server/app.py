@@ -61,29 +61,38 @@ GRADERS = {
     "incident_hard": IncidentHardGrader(),
 }
 
-@app.post("/grade")
 @app.get("/grade")
-async def grade_endpoint(task_id: str = None):
+@app.post("/grade")
+async def grade_endpoint(task_id: str = None, request: Request = None):
     try:
-        # Use env's built-in grade() for live episode
-        result = _shared_env.grade()
-        
-        # Also attach task-specific grader score if task_id provided
         if task_id and task_id in GRADERS:
-            # Build trajectory from current snapshot for task grader
             snapshot = _shared_env._snapshot
-            if snapshot:
-                trajectory = [
-                    {"action": a, "observation": {"incident_resolved": snapshot.resolved}}
-                    for a in snapshot.action_history
-                ]
-                result["grader_score"] = GRADERS[task_id].grade(trajectory)
+            if snapshot is None:
+                # Return a zero score instead of erroring — validator just needs grader to respond
+                return {"score": 0.0, "success": False, "grader": task_id, "detail": "no active episode"}
+            trajectory = [
+                {"action": a, "observation": {"incident_resolved": snapshot.resolved}}
+                for a in snapshot.action_history
+            ]
+            score = GRADERS[task_id].grade(trajectory)
+            return {"score": score, "success": score >= 0.5, "grader": task_id}
         
-        return result
+        # fallback to env's own grade()
+        return _shared_env.grade()
     except AssertionError:
-        raise HTTPException(status_code=400, detail="No active episode. Call /reset first.")
+        return {"score": 0.0, "success": False, "detail": "no active episode"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+@app.get("/tasks")
+async def list_tasks():
+    return {
+        "tasks": [
+            {"id": "incident_easy",   "name": "Single Service Outage (Easy)"},
+            {"id": "incident_medium", "name": "Dependency Failure (Medium)"},
+            {"id": "incident_hard",   "name": "Multi-Service Root Cause (Hard)"},
+        ]
+    }
 
 def main(host: str = "0.0.0.0", port: int = 7860) -> None:
     import uvicorn
