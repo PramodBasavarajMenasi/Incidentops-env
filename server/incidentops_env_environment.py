@@ -1,16 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
-
-"""
-Incidentops Env Environment Implementation.
-
-A simple test environment that echoes back messages sent to it.
-Perfect for testing HTTP server infrastructure.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -21,8 +8,8 @@ from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import State
 
 try:
-    from ..models import IncidentopsAction, IncidentopsObservation
-except Exception:
+    from models import IncidentopsAction, IncidentopsObservation
+except ImportError:
     from models import IncidentopsAction, IncidentopsObservation
 
 
@@ -66,16 +53,15 @@ SCENARIOS: Dict[str, List[Dict[str, Any]]] = {
                 "request_logs",
                 "rollback_deploy",
                 "restart_service",
-                "resolve_incident"
+                "resolve_incident",
             ],
             "correct_action_sequence": [
                 "rollback_deploy",
-                "resolve_incident"
+                "resolve_incident",
             ],
             "sla_steps": 5,
         }
     ],
-
     "incident_medium": [
         {
             "scenario_id": "medium_001",
@@ -101,12 +87,11 @@ SCENARIOS: Dict[str, List[Dict[str, Any]]] = {
                 "query_dependencies",
                 "escalate_db_team",
                 "restart_service",
-                "resolve_incident"
+                "resolve_incident",
             ],
             "sla_steps": 8,
         }
     ],
-
     "incident_hard": [
         {
             "scenario_id": "hard_001",
@@ -146,15 +131,11 @@ SCENARIOS: Dict[str, List[Dict[str, Any]]] = {
 class IncidentopsEnvironment(Environment):
     SUPPORTS_CONCURRENT_SESSIONS: bool = True
 
-    def __init__(self):
+    def init(self):
         self._state = State(episode_id=str(uuid4()), step_count=0)
         self._snapshot: Optional[IncidentSnapshot] = None
         self._difficulty = "easy"
         self._last_observation: Optional[IncidentopsObservation] = None
-
-    def _pick_scenario(self, difficulty: str) -> Dict[str, Any]:
-        scenarios = SCENARIOS.get(difficulty, SCENARIOS["easy"])
-        return scenarios[0]
 
     def _build_observation(self) -> IncidentopsObservation:
         assert self._snapshot is not None
@@ -189,7 +170,7 @@ class IncidentopsEnvironment(Environment):
         assert self._snapshot is not None
         s = self._snapshot
 
-        reward = -0.05  # small step cost
+        reward = -0.05
 
         if s.action_history.count(action) > 1:
             reward -= 0.2
@@ -245,7 +226,9 @@ class IncidentopsEnvironment(Environment):
 
         if action == "resolve_incident":
             if s.resolved or s.hidden_truth in {"bad_deployment", "db_timeout", "dns_issue"}:
-                if s.step_count <= s.sla_steps and (s.evidence_collected or s.team_engaged is not None or s.hidden_truth == "bad_deployment"):
+                if s.step_count <= s.sla_steps and (
+                    s.evidence_collected or s.team_engaged is not None or s.hidden_truth == "bad_deployment"
+                ):
                     reward += 1.5
                     s.resolved = True
                 else:
@@ -258,38 +241,43 @@ class IncidentopsEnvironment(Environment):
 
         return reward
 
-    def reset(
-    self,
-    episode_id: str = None,
-    task_id: str = "incident_easy",
-    **kwargs
-) -> IncidentopsObservation:
-
-        # ✅ Pick scenario based on task_id (not difficulty)
+    def reset(self, episode_id=None, task_id="incident_easy", **kwargs):
+        print(f"[ENV] reset called: task_id={task_id}", flush=True)
         scenarios = SCENARIOS.get(task_id, SCENARIOS["incident_easy"])
         scenario = scenarios[0]
 
-        # ✅ Initialize state
-        self._state = State(
-            episode_id=episode_id or str(uuid4()),
-            step_count=0
-        )
-
-        # ✅ Load scenario into snapshot
+        self._state = State(episode_id=episode_id or str(uuid4()), step_count=0)
         self._snapshot = IncidentSnapshot(**scenario)
         self._snapshot.action_history = []
 
-        # ✅ Build first observation
         self._last_observation = self._build_observation()
-
         return self._last_observation
 
-    def step(self, action: IncidentopsAction) -> IncidentopsObservation:  # type: ignore[override]
+    def step(self, action) -> IncidentopsObservation:
+        """Handle step - accept both IncidentopsAction objects and dicts."""
+        print(f"[ENV] step called: action={action}, type={type(action)}", flush=True)
+
+        # Extract action string from whatever format we receive
+        if isinstance(action, IncidentopsAction):
+            action_name = action.action
+        elif isinstance(action, dict):
+            action_name = action.get("action", "resolve_incident")
+        elif isinstance(action, str):
+            action_name = action
+        else:
+            action_name = str(action)
+
+        print(f"[ENV] action_name={action_name}", flush=True)
+
+        if self._snapshot is None:
+            print("[ENV] ERROR: No snapshot! Calling reset first.", flush=True)
+            self.reset()
+
         assert self._snapshot is not None
+
         self._snapshot.step_count += 1
         self._state.step_count = self._snapshot.step_count
 
-        action_name = action.action
         self._snapshot.action_history.append(action_name)
 
         reward = self._calc_reward(action_name)
@@ -303,25 +291,25 @@ class IncidentopsEnvironment(Environment):
             "last_action": action_name,
             "last_reward": reward,
         }
+
         if done:
             grade_result = self.grade()
-            obs.grader_score = grade_result["score"]
+            obs.metadata["grader_score"] = grade_result["score"]
 
         self._last_observation = obs
+        print(f"[ENV] step done: reward={reward:.2f}, done={done}", flush=True)
         return obs
+
     def grade(self) -> dict:
-        """Called by the OpenEnv validator to score a completed episode."""
         assert self._snapshot is not None
         s = self._snapshot
 
-        total_steps = max(s.step_count, 1)  # ✅ used below
+        total_steps = max(s.step_count, 1)
         sla_ok = s.step_count <= s.sla_steps
         correct_actions = sum(
             1 for a in s.action_history if a in s.correct_action_sequence
         )
         correctness_ratio = correct_actions / max(len(s.correct_action_sequence), 1)
-
-        # ✅ efficiency bonus — fewer steps = better score
         efficiency_bonus = max(0.0, (s.sla_steps - total_steps) / s.sla_steps)
 
         if s.resolved and sla_ok:
@@ -341,6 +329,7 @@ class IncidentopsEnvironment(Environment):
             "wrong_escalations": s.wrong_escalations,
             "evidence_collected": s.evidence_collected,
         }
+
     @property
     def state(self) -> State:
         return self._state

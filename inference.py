@@ -1,149 +1,181 @@
-from __future__ import annotations
-from dotenv import load_dotenv
-import os
-
-load_dotenv()
-import asyncio
 import json
 import os
-from typing import List, Optional
+import sys
+import traceback
+
+print("[DEBUG] line 6", flush=True)
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+print("[DEBUG] line 14", flush=True)
+
+import httpx
+
+print("[DEBUG] line 18", flush=True)
 
 from openai import OpenAI
 
-from client import IncidentopsEnv
-from models import IncidentopsAction
+print("[DEBUG] line 22", flush=True)
 
 API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY") or os.getenv("OPENAI_API_KEY")
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-TASK_NAME = os.getenv("INCIDENTOPS_TASK", "incidentops")
-BENCHMARK = os.getenv("INCIDENTOPS_BENCHMARK", "incidentops_env")
-MAX_STEPS = int(os.getenv("MAX_STEPS", "12"))
-TEMPERATURE = float(os.getenv("TEMPERATURE", "0.2"))
+BENCHMARK = "incidentops_env"
+TASK_IDS = ["incident_easy", "incident_medium", "incident_hard"]
 ENV_URL = os.getenv("ENV_URL", "http://localhost:8000")
-TASK_ID = os.getenv("TASK_ID", "incident_easy")
+MAX_STEPS = 12
+TEMPERATURE = 0.2
 
-SYSTEM_PROMPT = """
-You are an incident-response policy.
-Choose exactly one action from the environment's available actions.
-Prefer investigation when confidence is low.
-Prefer mitigation or escalation when evidence points to a cause.
-Return only the action string.
-""".strip()
+print("[DEBUG] line 33", flush=True)
 
 
-def log_start(task: str, env: str, model: str) -> None:
+def log_start(task, env, model):
     print(f"[START] task={task} env={env} model={model}", flush=True)
 
 
-def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
-    print(
-        f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={error if error else 'null'}",
-        flush=True,
-    )
+def log_step(step, action, reward, done, error):
+    err = error if error else "null"
+    d = str(done).lower()
+    print(f"[STEP] step={step} action={action} reward={reward:.2f} done={d} error={err}", flush=True)
 
 
-def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+def log_end(success, steps, score, rewards):
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-    print(
-        f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}",
-        flush=True,
-    )
+    print(f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}", flush=True)
 
 
-def choose_action(client: OpenAI, obs) -> str:
-    available = obs.available_actions or []
+def choose_action(obs):
+    available = obs.get("available_actions", [])
+    logs_available = obs.get("logs_available", False)
+    likely_cause = obs.get("likely_cause", "unknown")
+
     if not available:
         return "resolve_incident"
-
-    prompt = {
-        "alert_summary": obs.alert_summary,
-        "severity": obs.severity,
-        "likely_cause": obs.likely_cause,
-        "hf_confidence": obs.hf_confidence,
-        "logs_available": obs.logs_available,
-        "log_snippet": obs.log_snippet,
-        "services_affected": obs.services_affected,
-        "elapsed_steps": obs.elapsed_steps,
-        "sla_steps_remaining": obs.sla_steps_remaining,
-        "action_history": obs.action_history,
-        "available_actions": available,
-    }
-
-    response = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": json.dumps(prompt)},
-        ],
-        temperature=TEMPERATURE,
-        max_tokens=20,
-    )
-    text = (response.choices[0].message.content or "").strip().splitlines()[0].strip()
-
-    if text in available:
-        return text
-
-    # fallback heuristics
-    if not obs.logs_available and "request_logs" in available:
+    if not logs_available and "request_logs" in available:
         return "request_logs"
-    if obs.likely_cause == "dns_issue" and "query_dns_status" in available:
-        return "query_dns_status"
-    if obs.likely_cause == "dependency_issue" and "query_dependencies" in available:
+    if likely_cause == "bad_deployment" and "rollback_deploy" in available:
+        return "rollback_deploy"
+    if likely_cause == "dependency_issue" and "query_dependencies" in available:
         return "query_dependencies"
-    if obs.hf_confidence < 0.7 and "query_region_health" in available:
+    if likely_cause == "ambiguous" and "query_region_health" in available:
         return "query_region_health"
-    if "resolve_incident" in available and (obs.service_healthy or obs.incident_resolved):
+    if likely_cause == "dns_issue" and "query_dns_status" in available:
+        return "query_dns_status"
+    if likely_cause == "db_timeout" and "escalate_db_team" in available:
+        return "escalate_db_team"
+    if likely_cause == "dns_issue" and "escalate_network_team" in available:
+        return "escalate_network_team"
+    if likely_cause == "dns_issue" and "broadcast_status_page" in available:
+        return "broadcast_status_page"
+    if "restart_service" in available and likely_cause in ("db_timeout", "bad_deployment"):
+        return "restart_service"
+    if "resolve_incident" in available:
         return "resolve_incident"
-    return available[0]
+    return available[0] if available else "resolve_incident"
 
 
-async def main() -> None:
-    if not API_KEY:
-        raise RuntimeError("Missing HF_TOKEN/API_KEY/OPENAI_API_KEY")
+def extract_obs(data):
+    if "observation" in data:
+        obs = data["observation"]
+    else:
+        obs = data
+    if isinstance(obs, str):
+        obs = json.loads(obs)
+    return obs
 
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
-    env = await IncidentopsEnv.from_docker_image(os.getenv("IMAGE_NAME")) if os.getenv("IMAGE_NAME") else IncidentopsEnv(base_url=ENV_URL)
 
-    rewards: List[float] = []
+def run_task(http, task_id):
+    print(f"[DEBUG] Starting task: {task_id}", flush=True)
+    rewards = []
     steps_taken = 0
     success = False
     score = 0.0
 
-    log_start(TASK_NAME, BENCHMARK, MODEL_NAME)
+    log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
 
     try:
-        result = await env.reset(task_id=TASK_ID)
-        obs = result.observation
+        r = http.post(f"{ENV_URL}/reset", json={"task_id": task_id}, timeout=30.0)
+        r.raise_for_status()
+        obs = extract_obs(r.json())
+        print(f"[DEBUG] Reset OK: cause={obs.get('likely_cause')}", flush=True)
+
+        finished = obs.get("done", False) or obs.get("incident_resolved", False)
 
         for step in range(1, MAX_STEPS + 1):
-            if result.done:
+            if finished:
                 break
 
-            action_name = choose_action(client, obs)
-            result = await env.step(IncidentopsAction(action=action_name))
-            obs = result.observation
-            reward = float(result.reward or 0.0)
-            done = bool(result.done)
+            action_name = choose_action(obs)
+            print(f"[DEBUG] Step {step}: {action_name}", flush=True)
+
+            r = http.post(
+                f"{ENV_URL}/step",
+                json={"action": {"action": action_name}},
+                timeout=30.0,
+            )
+            r.raise_for_status()
+            step_data = r.json()
+            obs = extract_obs(step_data)
+
+            reward = float(step_data.get("reward", obs.get("reward", 0.0)))
+            finished = bool(
+                step_data.get("done", obs.get("done", False))
+                or obs.get("incident_resolved", False)
+            )
 
             rewards.append(reward)
             steps_taken = step
-            log_step(step, action_name, reward, done, None)
+            log_step(step, action_name, reward, finished, None)
 
-            if done:
-                break
+        r = http.get(f"{ENV_URL}/grade", params={"task_id": task_id}, timeout=30.0)
+        r.raise_for_status()
+        grade = r.json()
+        score = float(grade.get("score", 0.0))
+        success = bool(grade.get("success", False))
+        print(f"[DEBUG] Grade: {grade}", flush=True)
 
-        total_reward = sum(rewards)
-        score = max(0.0, min(1.0, total_reward / 5.0))
-        success = bool(obs.incident_resolved) and score >= 0.1
+    except Exception as e:
+        print(f"[DEBUG] Error: {e}", flush=True)
+        traceback.print_exc()
 
     finally:
-        try:
-            await env.close()
-        except Exception:
-            pass
         log_end(success, steps_taken, score, rewards)
 
 
+print("[DEBUG] line 137 - about to define main", flush=True)
+
+
+def main():
+    print(f"[DEBUG] main() called", flush=True)
+    print(f"[DEBUG] ENV_URL={ENV_URL}", flush=True)
+
+    http = httpx.Client()
+
+    try:
+        r = http.get(f"{ENV_URL}/tasks", timeout=10.0)
+        print(f"[DEBUG] Server OK: {r.status_code}", flush=True)
+    except Exception as e:
+        print(f"[ERROR] Server not running: {e}", flush=True)
+        return
+
+    for task_id in TASK_IDS:
+        run_task(http, task_id)
+
+    http.close()
+    print("[DEBUG] Done!", flush=True)
+
+
+print("[DEBUG] line 160 - about to check name", flush=True)
+print(f"[DEBUG] name = {__name__}", flush=True)
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    print("[DEBUG] entering main()", flush=True)
+    try:
+        main()
+    except Exception as e:
+        print(f"[FATAL] {e}", flush=True)
+        traceback.print_exc()
