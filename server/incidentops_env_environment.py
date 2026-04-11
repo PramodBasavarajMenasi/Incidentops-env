@@ -50,10 +50,10 @@ class IncidentSnapshot:
 
 
 SCENARIOS: Dict[str, List[Dict[str, Any]]] = {
-    "easy": [
+    "incident_easy": [
         {
             "scenario_id": "easy_001",
-            "task": "single_service_outage",
+            "task": "incident_easy",
             "alert_text": "SEV-2: payment-service latency high after deploy.",
             "hidden_truth": "bad_deployment",
             "severity": "high",
@@ -62,15 +62,24 @@ SCENARIOS: Dict[str, List[Dict[str, Any]]] = {
             "log_snippet": "deploy at 14:32 UTC caused connection pool exhaustion",
             "likely_cause": "bad_deployment",
             "hf_confidence": 0.92,
-            "available_actions": ["request_logs", "rollback_deploy", "restart_service", "resolve_incident"],
-            "correct_action_sequence": ["rollback_deploy", "resolve_incident"],
+            "available_actions": [
+                "request_logs",
+                "rollback_deploy",
+                "restart_service",
+                "resolve_incident"
+            ],
+            "correct_action_sequence": [
+                "rollback_deploy",
+                "resolve_incident"
+            ],
             "sla_steps": 5,
         }
     ],
-    "medium": [
+
+    "incident_medium": [
         {
             "scenario_id": "medium_001",
-            "task": "dependency_failure",
+            "task": "incident_medium",
             "alert_text": "SEV-1: api-gateway 5xx errors; user-profile-service slow; no logs available.",
             "hidden_truth": "db_timeout",
             "severity": "critical",
@@ -87,14 +96,21 @@ SCENARIOS: Dict[str, List[Dict[str, Any]]] = {
                 "restart_service",
                 "resolve_incident",
             ],
-            "correct_action_sequence": ["request_logs", "query_dependencies", "escalate_db_team", "restart_service", "resolve_incident"],
+            "correct_action_sequence": [
+                "request_logs",
+                "query_dependencies",
+                "escalate_db_team",
+                "restart_service",
+                "resolve_incident"
+            ],
             "sla_steps": 8,
         }
     ],
-    "hard": [
+
+    "incident_hard": [
         {
             "scenario_id": "hard_001",
-            "task": "multi_service_root_cause",
+            "task": "incident_hard",
             "alert_text": "SEV-1: EU checkout failures. Auth and payment degraded. Logs incomplete.",
             "hidden_truth": "dns_issue",
             "severity": "critical",
@@ -245,15 +261,27 @@ class IncidentopsEnvironment(Environment):
     def reset(
     self,
     episode_id: str = None,
-    difficulty: str = "easy",
+    task_id: str = "incident_easy",
     **kwargs
 ) -> IncidentopsObservation:
-        scenario = self._pick_scenario(difficulty)
-        self._difficulty = difficulty
-        self._state = State(episode_id=episode_id or str(uuid4()), step_count=0)
+
+        # ✅ Pick scenario based on task_id (not difficulty)
+        scenarios = SCENARIOS.get(task_id, SCENARIOS["incident_easy"])
+        scenario = scenarios[0]
+
+        # ✅ Initialize state
+        self._state = State(
+            episode_id=episode_id or str(uuid4()),
+            step_count=0
+        )
+
+        # ✅ Load scenario into snapshot
         self._snapshot = IncidentSnapshot(**scenario)
         self._snapshot.action_history = []
+
+        # ✅ Build first observation
         self._last_observation = self._build_observation()
+
         return self._last_observation
 
     def step(self, action: IncidentopsAction) -> IncidentopsObservation:  # type: ignore[override]

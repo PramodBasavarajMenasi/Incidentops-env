@@ -21,7 +21,7 @@ BENCHMARK = os.getenv("INCIDENTOPS_BENCHMARK", "incidentops_env")
 MAX_STEPS = int(os.getenv("MAX_STEPS", "12"))
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.2"))
 ENV_URL = os.getenv("ENV_URL", "http://localhost:8000")
-DIFFICULTY = os.getenv("DIFFICULTY", "easy")
+TASK_ID = os.getenv("TASK_ID", "incident_easy")
 
 SYSTEM_PROMPT = """
 You are an incident-response policy.
@@ -113,7 +113,7 @@ async def main() -> None:
     log_start(TASK_NAME, BENCHMARK, MODEL_NAME)
 
     try:
-        result = await env.reset(difficulty=DIFFICULTY)
+        result = await env.reset(task_id=TASK_ID)
         obs = result.observation
 
         for step in range(1, MAX_STEPS + 1):

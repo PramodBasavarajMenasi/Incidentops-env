@@ -3,14 +3,14 @@ name: incidentops_env
 type: space
 runtime: fastapi
 app: server.app:app
-port: 7860 
+port: 8000 
 
 tasks:
   - id: incident_easy
     name: "Single Service Outage (Easy)"
     description: "Diagnose and resolve a payment-service latency spike caused by a bad deployment."
     reset_kwargs:
-      difficulty: easy
+      task_id: incident_easy
     grader:
       type: class
       module: graders
@@ -18,9 +18,8 @@ tasks:
 
   - id: incident_medium
     name: "Dependency Failure (Medium)"
-    description: "Identify a DB timeout causing API gateway failures with no logs initially available."
     reset_kwargs:
-      difficulty: medium
+      task_id: incident_medium
     grader:
       type: class
       module: graders
@@ -28,9 +27,8 @@ tasks:
 
   - id: incident_hard
     name: "Multi-Service Root Cause (Hard)"
-    description: "Trace EU checkout failures across auth, payment, checkout to a DNS issue."
     reset_kwargs:
-      difficulty: hard
+      task_id: incident_hard
     grader:
       type: class
       module: graders

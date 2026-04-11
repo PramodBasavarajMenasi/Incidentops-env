@@ -65,22 +65,44 @@ GRADERS = {
 @app.post("/grade")
 async def grade_endpoint(task_id: str = None, request: Request = None):
     try:
-        if task_id and task_id in GRADERS:
-            snapshot = _shared_env._snapshot
-            if snapshot is None:
-                # Return a zero score instead of erroring — validator just needs grader to respond
-                return {"score": 0.0, "success": False, "grader": task_id, "detail": "no active episode"}
-            trajectory = [
-                {"action": a, "observation": {"incident_resolved": snapshot.resolved}}
-                for a in snapshot.action_history
-            ]
-            score = GRADERS[task_id].grade(trajectory)
-            return {"score": score, "success": score >= 0.5, "grader": task_id}
-        
-        # fallback to env's own grade()
-        return _shared_env.grade()
-    except AssertionError:
-        return {"score": 0.0, "success": False, "detail": "no active episode"}
+        # ✅ STRICT validation (important)
+        if not task_id or task_id not in GRADERS:
+            return {
+                "score": 0.0,
+                "success": False,
+                "detail": "invalid or missing task_id"
+            }
+
+        snapshot = _shared_env._snapshot
+
+        if snapshot is None:
+            return {
+                "score": 0.0,
+                "success": False,
+                "grader": task_id,
+                "detail": "no active episode"
+            }
+
+        # ✅ Build trajectory
+        trajectory = [
+            {
+                "action": a,
+                "observation": {
+                    "incident_resolved": snapshot.resolved
+                }
+            }
+            for a in snapshot.action_history
+        ]
+
+        # ✅ Call correct grader
+        score = GRADERS[task_id].grade(trajectory)
+
+        return {
+            "score": score,
+            "success": score >= 0.5,
+            "grader": task_id
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
@@ -94,7 +116,7 @@ async def list_tasks():
         ]
     }
 
-def main(host: str = "0.0.0.0", port: int = 7860) -> None:
+def main(host: str = "0.0.0.0", port: int = 8000) -> None:
     import uvicorn
     uvicorn.run(app, host=host, port=port)
 
