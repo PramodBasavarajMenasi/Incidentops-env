@@ -9,8 +9,6 @@ from models import IncidentopsAction, IncidentopsObservation
 class IncidentopsEnv(EnvClient[IncidentopsAction, IncidentopsObservation, State]):
 
     def _step_payload(self, action: IncidentopsAction) -> Dict:
-        # Return just the model_dump — NOT wrapped in {"action": ...}
-        # The server will do IncidentopsAction.model_validate(payload)
         return action.model_dump()
 
     def _reset_payload(self, **kwargs: Any) -> Dict:

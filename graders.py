@@ -35,13 +35,11 @@ class BaseIncidentGrader:
 
         total_steps = len(actions_taken)
 
-        # Correctness: how many correct actions were taken
         correct_actions = sum(
             1 for a in actions_taken if a in self.expected_actions
         )
         correctness_ratio = correct_actions / max(len(self.expected_actions), 1)
 
-        # Efficiency bonus
         efficiency_bonus = max(0.0, (self.sla_steps - total_steps) / self.sla_steps)
 
         sla_ok = total_steps <= self.sla_steps

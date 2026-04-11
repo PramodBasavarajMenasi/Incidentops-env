@@ -12,7 +12,6 @@ try:
 except ImportError:
     pass
 
-# MANDATORY: Use the injected environment variables
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1")
 API_KEY = os.environ.get("API_KEY", "") or os.environ.get("HF_TOKEN", "")
 MODEL_NAME = os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
@@ -85,7 +84,6 @@ def choose_action_llm(client, obs):
             max_tokens=20,
         )
         text = (response.choices[0].message.content or "").strip()
-        # Clean up response - take first line, remove quotes
         text = text.splitlines()[0].strip().strip("'\"` ")
 
         if text in available:
@@ -99,7 +97,6 @@ def choose_action_llm(client, obs):
     except Exception as e:
         print(f"[DEBUG] LLM call error: {e}", flush=True)
 
-    # Deterministic fallback only if LLM fails
     return choose_action_deterministic(obs)
 
 
@@ -153,7 +150,6 @@ def run_task(client, http, task_id):
     log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
 
     try:
-        # RESET
         r = http.post(f"{ENV_URL}/reset", json={"task_id": task_id}, timeout=30.0)
         r.raise_for_status()
         obs = extract_obs(r.json())
@@ -164,10 +160,10 @@ def run_task(client, http, task_id):
             if finished:
                 break
 
-            # ALWAYS call LLM (required by validator)
+
             action_name = choose_action_llm(client, obs)
 
-            # STEP
+    
             r = http.post(
                 f"{ENV_URL}/step",
                 json={"action": {"action": action_name}},
@@ -187,7 +183,7 @@ def run_task(client, http, task_id):
             steps_taken = step
             log_step(step, action_name, reward, finished, None)
 
-        # GRADE
+
         try:
             r = http.get(f"{ENV_URL}/grade", params={"task_id": task_id}, timeout=30.0)
             r.raise_for_status()
@@ -212,7 +208,7 @@ def main():
         print("[ERROR] No API_KEY or HF_TOKEN set!", flush=True)
         sys.exit(1)
 
-    # Initialize OpenAI client with injected credentials
+
     client = OpenAI(
         base_url=API_BASE_URL,
         api_key=API_KEY,
@@ -220,7 +216,6 @@ def main():
 
     http = httpx.Client()
 
-    # Health check
     try:
         r = http.get(f"{ENV_URL}/tasks", timeout=10.0)
         r.raise_for_status()
@@ -231,7 +226,6 @@ def main():
             log_end(False, 0, 0.0, [])
         return
 
-    # Run all 3 tasks
     for task_id in TASK_IDS:
         run_task(client, http, task_id)
 

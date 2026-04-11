@@ -257,7 +257,7 @@ class IncidentopsEnvironment(Environment):
         """Handle step - accept both IncidentopsAction objects and dicts."""
         print(f"[ENV] step called: action={action}, type={type(action)}", flush=True)
 
-        # Extract action string from whatever format we receive
+       
         if isinstance(action, IncidentopsAction):
             action_name = action.action
         elif isinstance(action, dict):

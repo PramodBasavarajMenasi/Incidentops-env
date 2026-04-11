@@ -43,11 +43,11 @@ except Exception:
     from server.incidentops_env_environment import IncidentopsEnvironment
 
 
-# ✅ Single shared env instance used by BOTH create_app and /grade
+
 _shared_env = IncidentopsEnvironment()
 
 app = create_app(
-    lambda: _shared_env,   # ← pass a factory that returns same instance
+    lambda: _shared_env,   
     IncidentopsAction,
     IncidentopsObservation,
     env_name="incidentops_env",
@@ -65,7 +65,6 @@ GRADERS = {
 @app.post("/grade")
 async def grade_endpoint(task_id: str = None, request: Request = None):
     try:
-        # ✅ STRICT validation (important)
         if not task_id or task_id not in GRADERS:
             return {
                 "score": 0.0,
@@ -83,7 +82,6 @@ async def grade_endpoint(task_id: str = None, request: Request = None):
                 "detail": "no active episode"
             }
 
-        # ✅ Build trajectory
         trajectory = [
             {
                 "action": a,
@@ -94,7 +92,6 @@ async def grade_endpoint(task_id: str = None, request: Request = None):
             for a in snapshot.action_history
         ]
 
-        # ✅ Call correct grader
         score = GRADERS[task_id].grade(trajectory)
 
         return {
