@@ -1,14 +1,8 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
-
 # All rights reserved.
-
 #
-
 # This source code is licensed under the BSD-style license found in the
-
 # LICENSE file in the root directory of this source tree.
-
-
 
 """
 FastAPI application for the Incidentops Env Environment.
@@ -24,13 +18,12 @@ Endpoints:
 Usage:
     # Development (with auto-reload):
     uvicorn server.app:app --reload --host 0.0.0.0 --port 8000
-
     # Production:
     uvicorn server.app:app --host 0.0.0.0 --port 8000 --workers 4
-
     # Or run directly:
     python -m server.app
 """
+
 from __future__ import annotations
 from fastapi import HTTPException, Request
 from openenv.core.env_server.http_server import create_app
@@ -42,12 +35,11 @@ except Exception:
     from models import IncidentopsAction, IncidentopsObservation
     from server.incidentops_env_environment import IncidentopsEnvironment
 
-
-
 _shared_env = IncidentopsEnvironment()
 
+#App
 app = create_app(
-    lambda: _shared_env,   
+    lambda: _shared_env,  
     IncidentopsAction,
     IncidentopsObservation,
     env_name="incidentops_env",
@@ -61,10 +53,12 @@ GRADERS = {
     "incident_hard": IncidentHardGrader(),
 }
 
+## Grade
 @app.get("/grade")
 @app.post("/grade")
 async def grade_endpoint(task_id: str = None, request: Request = None):
     try:
+      
         if not task_id or task_id not in GRADERS:
             return {
                 "score": 0.0,
@@ -102,7 +96,8 @@ async def grade_endpoint(task_id: str = None, request: Request = None):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
+
+# Tasks
 @app.get("/tasks")
 async def list_tasks():
     return {
@@ -112,6 +107,7 @@ async def list_tasks():
             {"id": "incident_hard",   "name": "Multi-Service Root Cause (Hard)"},
         ]
     }
+
 
 def main(host: str = "0.0.0.0", port: int = 8000) -> None:
     import uvicorn

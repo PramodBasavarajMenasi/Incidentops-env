@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 
+# Base Class
 class BaseIncidentGrader:
     """Base grader with shared logic."""
 
@@ -35,11 +36,13 @@ class BaseIncidentGrader:
 
         total_steps = len(actions_taken)
 
+       
         correct_actions = sum(
             1 for a in actions_taken if a in self.expected_actions
         )
         correctness_ratio = correct_actions / max(len(self.expected_actions), 1)
 
+     
         efficiency_bonus = max(0.0, (self.sla_steps - total_steps) / self.sla_steps)
 
         sla_ok = total_steps <= self.sla_steps
@@ -54,12 +57,14 @@ class BaseIncidentGrader:
         return round(score, 4)
 
 
+# IncidentEasyGrader
 class IncidentEasyGrader(BaseIncidentGrader):
     task_id = "incident_easy"
     expected_actions = ["rollback_deploy", "resolve_incident"]
     sla_steps = 5
 
 
+# IncidentMediumGrader
 class IncidentMediumGrader(BaseIncidentGrader):
     task_id = "incident_medium"
     expected_actions = [
@@ -72,6 +77,7 @@ class IncidentMediumGrader(BaseIncidentGrader):
     sla_steps = 8
 
 
+# IncidentHardGrader
 class IncidentHardGrader(BaseIncidentGrader):
     task_id = "incident_hard"
     expected_actions = [

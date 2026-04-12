@@ -36,6 +36,7 @@ class IncidentSnapshot:
     team_engaged: Optional[str] = None
 
 
+# Scenarios
 SCENARIOS: Dict[str, List[Dict[str, Any]]] = {
     "incident_easy": [
         {
@@ -128,13 +129,14 @@ SCENARIOS: Dict[str, List[Dict[str, Any]]] = {
 }
 
 
+#  Main Environment Class
 class IncidentopsEnvironment(Environment):
     SUPPORTS_CONCURRENT_SESSIONS: bool = True
 
     def init(self):
         self._state = State(episode_id=str(uuid4()), step_count=0)
         self._snapshot: Optional[IncidentSnapshot] = None
-        self._difficulty = "easy"
+        self._difficulty = "incident_easy"
         self._last_observation: Optional[IncidentopsObservation] = None
 
     def _build_observation(self) -> IncidentopsObservation:
@@ -165,7 +167,8 @@ class IncidentopsEnvironment(Environment):
             reward=0.0,
             done=self._snapshot.resolved,
         )
-
+    
+    # Reward
     def _calc_reward(self, action: str) -> float:
         assert self._snapshot is not None
         s = self._snapshot
@@ -241,6 +244,7 @@ class IncidentopsEnvironment(Environment):
 
         return reward
 
+    # ReSet
     def reset(self, episode_id=None, task_id="incident_easy", **kwargs):
         print(f"[ENV] reset called: task_id={task_id}", flush=True)
         scenarios = SCENARIOS.get(task_id, SCENARIOS["incident_easy"])
@@ -253,11 +257,11 @@ class IncidentopsEnvironment(Environment):
         self._last_observation = self._build_observation()
         return self._last_observation
 
+    # Step
     def step(self, action) -> IncidentopsObservation:
         """Handle step - accept both IncidentopsAction objects and dicts."""
         print(f"[ENV] step called: action={action}, type={type(action)}", flush=True)
 
-       
         if isinstance(action, IncidentopsAction):
             action_name = action.action
         elif isinstance(action, dict):
@@ -300,6 +304,7 @@ class IncidentopsEnvironment(Environment):
         print(f"[ENV] step done: reward={reward:.2f}, done={done}", flush=True)
         return obs
 
+    # Grade
     def grade(self) -> dict:
         assert self._snapshot is not None
         s = self._snapshot

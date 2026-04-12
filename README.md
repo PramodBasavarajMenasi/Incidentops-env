@@ -10,246 +10,273 @@ base_path: /web
 tags:
   - openenv
 ---
+# 🚨 IncidentOps-Env
 
-# Incidentops Env Environment
+> **OpenEnv-compatible Reinforcement Learning environment for AI-driven incident response**  
+> Meta PyTorch Hackathon × Scaler School of Technology — Round 1 Submission
 
-A simple test environment that echoes back messages. Perfect for testing the env APIs as well as demonstrating environment usage patterns.
+[![Hugging Face Space](https://img.shields.io/badge/🤗%20HuggingFace-Space-blue)](https://huggingface.co/spaces/menasi11/incidentops-env)
+[![OpenEnv](https://img.shields.io/badge/OpenEnv-Compatible-green)](https://github.com/openenv)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-teal)](https://fastapi.tiangolo.com)
 
-## Quick Start
+---
 
-The simplest way to use the Incidentops Env environment is through the `IncidentopsEnv` class:
+## 📌 Problem Statement
+
+Modern engineering teams face an ever-growing volume of production incidents — SEV-1 outages, cascading service failures, ambiguous alerts with incomplete logs — all under strict SLA pressure. A human on-call engineer must rapidly triage signals, investigate root causes, engage the right teams, and resolve incidents before breach.
+
+**This is exactly the kind of high-stakes sequential decision-making task where AI agents can be trained and evaluated.** Yet, no standardized RL benchmark environment exists for incident response.
+
+**IncidentOps-Env** fills that gap: a realistic, multi-difficulty OpenEnv environment that forces an AI agent to reason under uncertainty, gather evidence, escalate correctly, and resolve production incidents — all within SLA constraints.
+
+---
+
+## 💡 Why This Problem?
+
+- **Real-world complexity**: Incident response is not a game or toy task. It involves ambiguous observations, partial information, and high cost of wrong actions.
+- **Sequential decision-making**: Each action (request logs, escalate, rollback) changes the environment state and brings the agent closer to — or further from — resolution.
+- **Measurable outcomes**: Success, SLA compliance, wrong escalations, and efficiency are all objectively measurable, making it ideal for RL benchmarking.
+- **Practical AI value**: An agent trained on this environment could assist on-call engineers in real SRE workflows.
+
+---
+
+## 🏗️ How It Works
+
+The environment exposes a `step() / reset() / state()` HTTP API via FastAPI, fully compatible with the OpenEnv spec.
+
+```
+Agent → POST /reset (task_id) → Initial Observation
+Agent → POST /step  (action)  → Observation + Reward + Done
+Agent → GET  /grade (task_id) → Final Score [0.0 – 1.0]
+```
+
+At each step, the agent receives a structured **observation** (alert summary, severity, affected services, log snippets, confidence scores, action history) and must choose one action from the available action set. The environment tracks whether the agent:
+
+- Gathers evidence before deciding
+- Escalates to the **correct** team
+- Stays within the SLA step budget
+- Resolves the incident with the right sequence of actions
+
+A shaped **reward function** provides dense feedback throughout the episode — not just at the end.
+
+---
+
+## 📋 Tasks
+
+### Task 1 — `incident_easy`: Single Service Outage
+
+| Property | Value |
+|---|---|
+| Severity | SEV-2 / High |
+| Root Cause | Bad deployment → connection pool exhaustion |
+| SLA Budget | 5 steps |
+| Affected Service | `payment-service` |
+
+**Scenario**: A deployment at 14:32 UTC caused latency spikes on the payment service. Logs are available. The agent must recognize the deployment as the cause and rollback without unnecessary detours.
+
+**Optimal sequence**: `rollback_deploy` → `resolve_incident`
+
+**What the agent must learn**: When logs clearly point to a bad deploy, act fast — don't over-investigate.
+
+---
+
+### Task 2 — `incident_medium`: Dependency Failure
+
+| Property | Value |
+|---|---|
+| Severity | SEV-1 / Critical |
+| Root Cause | Database timeout cascading to multiple services |
+| SLA Budget | 8 steps |
+| Affected Services | `api-gateway`, `user-profile-service` |
+
+**Scenario**: Multiple services are degraded with no logs initially available. The agent must request logs first, query dependencies to identify the DB as the bottleneck, engage the DB team, and then restart the service.
+
+**Optimal sequence**: `request_logs` → `query_dependencies` → `escalate_db_team` → `restart_service` → `resolve_incident`
+
+**What the agent must learn**: Investigate before escalating. Escalating the wrong team costs heavy reward penalty.
+
+---
+
+### Task 3 — `incident_hard`: Multi-Service Root Cause
+
+| Property | Value |
+|---|---|
+| Severity | SEV-1 / Critical |
+| Root Cause | DNS failure in EU region (ambiguous initial signals) |
+| SLA Budget | 12 steps |
+| Affected Services | `auth-service`, `payment-service`, `checkout-service` |
+
+**Scenario**: EU checkout is failing across auth, payment, and checkout. Logs are incomplete. The initial `likely_cause` is `ambiguous` with only 55% confidence. The agent must check region health, query DNS status, engage the network team, broadcast a status update, and resolve.
+
+**Optimal sequence**: `query_region_health` → `query_dns_status` → `escalate_network_team` → `broadcast_status_page` → `resolve_incident`
+
+**What the agent must learn**: Under ambiguity, gather the right evidence systematically. Wrong escalations (e.g., DB team for a DNS issue) are penalized. Broadcast early for SEV-1 multi-service incidents.
+
+---
+
+## 🎯 Reward Function
+
+The reward function provides **dense, shaped feedback** across the full episode trajectory:
+
+| Event | Reward |
+|---|---|
+| Each step taken | `-0.05` (step cost) |
+| Duplicate action | `-0.20` |
+| Correct rollback (bad deployment) | `+1.0` |
+| Correct log request (when unavailable) | `+0.30` |
+| Correct dependency query (DB timeout) | `+0.50` |
+| Correct DNS query (DNS issue) | `+0.50` |
+| Region health check (ambiguous) | `+0.40` |
+| Correct team escalation | `+0.70` |
+| Wrong team escalation | `-0.50` |
+| Resolve within SLA with evidence | `+1.50` |
+| Premature resolve | `-1.0` to `-2.0` |
+| SLA breach | `-0.50` per excess step |
+
+---
+
+## 📊 Observation Space
 
 ```python
-from incidentops_env import IncidentopsAction, IncidentopsEnv
-
-try:
-    # Create environment from Docker image
-    incidentops_envenv = IncidentopsEnv.from_docker_image("incidentops_env-env:latest")
-
-    # Reset
-    result = incidentops_envenv.reset()
-    print(f"Reset: {result.observation.echoed_message}")
-
-    # Send multiple messages
-    messages = ["Hello, World!", "Testing echo", "Final message"]
-
-    for msg in messages:
-        result = incidentops_envenv.step(IncidentopsAction(message=msg))
-        print(f"Sent: '{msg}'")
-        print(f"  → Echoed: '{result.observation.echoed_message}'")
-        print(f"  → Length: {result.observation.message_length}")
-        print(f"  → Reward: {result.reward}")
-
-finally:
-    # Always clean up
-    incidentops_envenv.close()
+class IncidentopsObservation(Observation):
+    alert_summary: str          # Human-readable incident description
+    severity: str               # "low" | "high" | "critical"
+    likely_cause: str           # Current root cause hypothesis
+    hf_confidence: float        # Confidence in the hypothesis [0.0–1.0]
+    services_affected: List[str]
+    logs_available: bool
+    log_snippet: str            # Evidence string (if logs available)
+    service_healthy: bool
+    elapsed_steps: int
+    sla_steps_remaining: int
+    action_history: List[str]
+    available_actions: List[str]
+    incident_resolved: bool
+    wrong_escalations: int
+    reward: float
+    done: bool
 ```
 
-That's it! The `IncidentopsEnv.from_docker_image()` method handles:
-- Starting the Docker container
-- Waiting for the server to be ready
-- Connecting to the environment
-- Container cleanup when you call `close()`
+---
 
-## Building the Docker Image
+## ⚡ Action Space
 
-Before using the environment, you need to build the Docker image:
+Actions vary by task. The full set across all tasks:
+
+| Action | Description |
+|---|---|
+| `request_logs` | Fetch logs for the affected services |
+| `query_dependencies` | Check upstream/downstream service dependencies |
+| `query_dns_status` | Query DNS resolver status in affected region |
+| `query_region_health` | Check regional infrastructure health |
+| `rollback_deploy` | Revert the most recent deployment |
+| `restart_service` | Restart the affected service(s) |
+| `escalate_db_team` | Page the database on-call team |
+| `escalate_network_team` | Page the network/infrastructure team |
+| `broadcast_status_page` | Post a public status update |
+| `resolve_incident` | Mark the incident as resolved |
+
+---
+
+## 🚀 Setup & Usage
+
+### Run Locally
 
 ```bash
-# From project root
-docker build -t incidentops_env-env:latest -f server/Dockerfile .
+git clone https://huggingface.co/spaces/menasi11/incidentops-env
+cd incidentops-env
+
+pip install -r server/requirements.txt
+
+uvicorn server.app:app --host 0.0.0.0 --port 8000
 ```
 
-## Deploying to Hugging Face Spaces
-
-You can easily deploy your OpenEnv environment to Hugging Face Spaces using the `openenv push` command:
+### Docker
 
 ```bash
-# From the environment directory (where openenv.yaml is located)
-openenv push
-
-# Or specify options
-openenv push --namespace my-org --private
+docker build -t incidentops-env .
+docker run -p 8000:8000 incidentops-env
 ```
 
-The `openenv push` command will:
-1. Validate that the directory is an OpenEnv environment (checks for `openenv.yaml`)
-2. Prepare a custom build for Hugging Face Docker space (enables web interface)
-3. Upload to Hugging Face (ensuring you're logged in)
-
-### Prerequisites
-
-- Authenticate with Hugging Face: The command will prompt for login if not already authenticated
-
-### Options
-
-- `--directory`, `-d`: Directory containing the OpenEnv environment (defaults to current directory)
-- `--repo-id`, `-r`: Repository ID in format 'username/repo-name' (defaults to 'username/env-name' from openenv.yaml)
-- `--base-image`, `-b`: Base Docker image to use (overrides Dockerfile FROM)
-- `--private`: Deploy the space as private (default: public)
-
-### Examples
+### Run Baseline Inference
 
 ```bash
-# Push to your personal namespace (defaults to username/env-name from openenv.yaml)
-openenv push
-
-# Push to a specific repository
-openenv push --repo-id my-org/my-env
-
-# Push with a custom base image
-openenv push --base-image ghcr.io/meta-pytorch/openenv-base:latest
-
-# Push as a private space
-openenv push --private
-
-# Combine options
-openenv push --repo-id my-org/my-env --base-image custom-base:latest --private
+export HF_TOKEN=your_hf_token_here
+python inference.py
 ```
 
-After deployment, your space will be available at:
-`https://huggingface.co/spaces/<repo-id>`
+The inference script uses `Qwen/Qwen2.5-72B-Instruct` via the HuggingFace Router with an LLM-first policy and a deterministic fallback. It runs all three tasks and logs per-step rewards and final scores.
 
-The deployed space includes:
-- **Web Interface** at `/web` - Interactive UI for exploring the environment
-- **API Documentation** at `/docs` - Full OpenAPI/Swagger interface
-- **Health Check** at `/health` - Container health monitoring
-- **WebSocket** at `/ws` - Persistent session endpoint for low-latency interactions
+---
 
-## Environment Details
+## 🌐 API Endpoints
 
-### Action
-**IncidentopsAction**: Contains a single field
-- `message` (str) - The message to echo back
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/reset` | Reset environment. Body: `{"task_id": "incident_easy"}` |
+| `POST` | `/step` | Take action. Body: `{"action": {"action": "rollback_deploy"}}` |
+| `GET` | `/state` | Get current environment state |
+| `GET` | `/tasks` | List all available tasks |
+| `GET/POST` | `/grade` | Get grader score. Param: `?task_id=incident_easy` |
 
-### Observation
-**IncidentopsObservation**: Contains the echo response and metadata
-- `echoed_message` (str) - The message echoed back
-- `message_length` (int) - Length of the message
-- `reward` (float) - Reward based on message length (length × 0.1)
-- `done` (bool) - Always False for echo environment
-- `metadata` (dict) - Additional info like step count
+---
 
-### Reward
-The reward is calculated as: `message_length × 0.1`
-- "Hi" → reward: 0.2
-- "Hello, World!" → reward: 1.3
-- Empty message → reward: 0.0
+## 📈 Baseline Scores
 
-## Advanced Usage
+Scores produced by the LLM baseline agent (`Qwen2.5-72B-Instruct`) on Hugging Face Inference API:
 
-### Connecting to an Existing Server
+| Task | Score | Success |
+|---|---|---|
+| `incident_easy` | ~0.80 | ✅ |
+| `incident_medium` | ~0.65 | ✅ |
+| `incident_hard` | ~0.50 | ⚠️ Partial |
 
-If you already have a Incidentops Env environment server running, you can connect directly:
+> Scores reflect the combination of resolution success, SLA compliance, correct action selection, and efficiency.
 
-```python
-from incidentops_env import IncidentopsEnv
+---
 
-# Connect to existing server
-incidentops_envenv = IncidentopsEnv(base_url="<ENV_HTTP_URL_HERE>")
-
-# Use as normal
-result = incidentops_envenv.reset()
-result = incidentops_envenv.step(IncidentopsAction(message="Hello!"))
-```
-
-Note: When connecting to an existing server, `incidentops_envenv.close()` will NOT stop the server.
-
-### Using the Context Manager
-
-The client supports context manager usage for automatic connection management:
-
-```python
-from incidentops_env import IncidentopsAction, IncidentopsEnv
-
-# Connect with context manager (auto-connects and closes)
-with IncidentopsEnv(base_url="http://localhost:8000") as env:
-    result = env.reset()
-    print(f"Reset: {result.observation.echoed_message}")
-    # Multiple steps with low latency
-    for msg in ["Hello", "World", "!"]:
-        result = env.step(IncidentopsAction(message=msg))
-        print(f"Echoed: {result.observation.echoed_message}")
-```
-
-The client uses WebSocket connections for:
-- **Lower latency**: No HTTP connection overhead per request
-- **Persistent session**: Server maintains your environment state
-- **Efficient for episodes**: Better for many sequential steps
-
-### Concurrent WebSocket Sessions
-
-The server supports multiple concurrent WebSocket connections. To enable this,
-modify `server/app.py` to use factory mode:
-
-```python
-# In server/app.py - use factory mode for concurrent sessions
-app = create_app(
-    IncidentopsEnvironment,  # Pass class, not instance
-    IncidentopsAction,
-    IncidentopsObservation,
-    max_concurrent_envs=4,  # Allow 4 concurrent sessions
-)
-```
-
-Then multiple clients can connect simultaneously:
-
-```python
-from incidentops_env import IncidentopsAction, IncidentopsEnv
-from concurrent.futures import ThreadPoolExecutor
-
-def run_episode(client_id: int):
-    with IncidentopsEnv(base_url="http://localhost:8000") as env:
-        result = env.reset()
-        for i in range(10):
-            result = env.step(IncidentopsAction(message=f"Client {client_id}, step {i}"))
-        return client_id, result.observation.message_length
-
-# Run 4 episodes concurrently
-with ThreadPoolExecutor(max_workers=4) as executor:
-    results = list(executor.map(run_episode, range(4)))
-```
-
-## Development & Testing
-
-### Direct Environment Testing
-
-Test the environment logic directly without starting the HTTP server:
-
-```bash
-# From the server directory
-python3 server/incidentops_env_environment.py
-```
-
-This verifies that:
-- Environment resets correctly
-- Step executes actions properly
-- State tracking works
-- Rewards are calculated correctly
-
-### Running Locally
-
-Run the server locally for development:
-
-```bash
-uvicorn server.app:app --reload
-```
-
-## Project Structure
+## 🗂️ Project Structure
 
 ```
-incidentops_env/
-├── .dockerignore         # Docker build exclusions
-├── __init__.py            # Module exports
-├── README.md              # This file
-├── openenv.yaml           # OpenEnv manifest
-├── pyproject.toml         # Project metadata and dependencies
-├── uv.lock                # Locked dependencies (generated)
-├── client.py              # IncidentopsEnv client
-├── models.py              # Action and Observation models
-└── server/
-    ├── __init__.py        # Server module exports
-    ├── incidentops_env_environment.py  # Core environment logic
-    ├── app.py             # FastAPI application (HTTP + WebSocket endpoints)
-    └── Dockerfile         # Container image definition
+incidentops-env/
+├── server/
+│   ├── app.py                          # FastAPI application + /grade + /tasks endpoints
+│   ├── incidentops_env_environment.py  # Core OpenEnv Environment class
+│   └── requirements.txt
+├── models.py                           # Pydantic Action + Observation types
+├── graders.py                          # IncidentEasyGrader, IncidentMediumGrader, IncidentHardGrader
+├── client.py                           # OpenEnv EnvClient wrapper
+├── inference.py                        # Baseline LLM agent runner
+├── openenv.yaml                        # OpenEnv spec metadata
+├── Dockerfile
+└── README.md
 ```
+
+---
+
+## 🔧 OpenEnv Compliance
+
+This environment implements the full OpenEnv interface:
+
+- ✅ `reset(task_id)` → returns initial `IncidentopsObservation`
+- ✅ `step(action)` → returns `observation, reward, done, info`
+- ✅ `state` property → returns current `State`
+- ✅ Typed Pydantic models for `Action` and `Observation`
+- ✅ `openenv.yaml` with spec version, tasks, and grader config
+- ✅ Graders with deterministic `[0.0–1.0]` scoring
+- ✅ Deployed to Hugging Face Spaces as a Docker container
+
+---
+
+## 👤 Author
+
+Built solo for the **Meta PyTorch Hackathon × Scaler School of Technology — Round 1**
+
+🤗 Space: [huggingface.co/spaces/menasi11/incidentops-env](https://huggingface.co/spaces/menasi11/incidentops-env)
+
+---
+
+## 📄 License
+
+This project is submitted as part of the OpenEnv Hackathon. Core OpenEnv framework components are copyright Meta Platforms, Inc. and affiliates, licensed under the BSD-style license included in the repository.
